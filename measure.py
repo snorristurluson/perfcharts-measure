@@ -28,7 +28,7 @@ def main():
     m.run(args.count)
 
 
-class Measurer():
+class Measurer:
     def __init__(self, config, branch):
         self.config = config
         self.branch = branch
@@ -37,6 +37,7 @@ class Measurer():
 
         if not os.path.exists(self.config["folder"]):
             os.mkdir(self.config["folder"])
+        if not os.path.exists(os.path.join(self.config["folder"], ".git")):
             self.cmd("git clone {repoUrl} {folder}".format(**self.config), run_in_folder=False)
 
         self.cmd("git fetch && git checkout {branch} && git pull".format(branch=self.branch))
@@ -65,13 +66,12 @@ class Measurer():
             self.cmd(self.config["build"])
 
             try:
-                outputfiles = measure(sha, self.config["repoName"], self.branch, self.config["folder"], self.config["benchmarks"])
+                output_files = measure(sha, self.config["repoName"], self.branch, self.config["folder"],
+                                       self.config["benchmarks"])
             except Exception as e:
                 print(e)
 
             # todo: check output against reference
-            print(outputfiles)
-
 
     def cmd(self, cmd, capture_output=False, run_in_folder=True):
         if run_in_folder:
