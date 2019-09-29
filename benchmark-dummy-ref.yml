@@ -1,0 +1,21 @@
+folder: /home/snorri/benchmark-dummy
+repoName: benchmark-dummy
+revision:
+  name: v1
+  date: "2019-01-01 20:26:10"
+benchmarks:
+  - name: TimeWaster5
+    executable: benchmark-dummy
+    command: java -cp /home/snorri/benchmark-dummy/build/classes/java/main main.Main TimeWaster 5
+  - name: TimeWaster10
+    executable: benchmark-dummy
+    command: java -cp /home/snorri/benchmark-dummy/build/classes/java/main main.Main TimeWaster 10
+  - name: BusyWait5
+    executable: benchmark-dummy
+    command: java -cp /home/snorri/benchmark-dummy/build/classes/java/main main.Main BusyWait 5
+  - name: BusyWait15
+    executable: benchmark-dummy
+    command: java -cp /home/snorri/benchmark-dummy/build/classes/java/main main.Main BusyWait 15
+  - name: FileMaker5
+    executable: benchmark-dummy
+    command: java -cp /home/snorri/benchmark-dummy/build/classes/java/main main.Main FileMaker 5

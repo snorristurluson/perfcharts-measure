@@ -1,8 +1,9 @@
-import copy
+import hashlib
 import json
 import os
 import platform
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -12,11 +13,24 @@ import urllib.request
 import psutil as psutil
 
 
+def calc_checksum(outname):
+    m = hashlib.md5()
+    with open(outname) as f:
+        for chunk in iter(f.read(4096)):
+            m.update(chunk.encode("utf8"))
+    checksum = m.hexdigest()
+    return checksum
+
+
 class Measurer:
-    def __init__(self, config, branch):
+    def __init__(self, config, args):
         self.output_files = []
         self.config = config
-        self.branch = branch
+        self.branch = args.branch
+        self.set_reference = args.reference
+        self.skip_build = args.nobuild
+        if self.skip_build and self.set_reference:
+            self.branch = "specialReferenceRevisionBranch"
 
     def run(self, count):
         self.prepare_repo_folder()
@@ -35,13 +49,13 @@ class Measurer:
 
     def run_benchmarks_for_revision(self, revision):
         try:
-            results_list = []
             working_directory = self.config["folder"]
             benchmarks = self.config["benchmarks"]
             for each in benchmarks:
-                result = self.run_benchmark(each, revision, working_directory)
+                results_list = []
+                metrics, checksum = self.run_benchmark(each, revision, working_directory)
 
-                for field, value in result.items():
+                for field, value in metrics.items():
                     data = {
                         "commitid": revision,
                         "repo": self.config["repoName"],
@@ -50,15 +64,16 @@ class Measurer:
                         "executable": (each["executable"]),
                         "benchmark": (each["name"]),
                         "metric": field,
-                        "result_value": value
+                        "result_value": value,
+                        "checksum": checksum
                     }
 
                     results_list.append(data)
+                print("Posting results for {name}:{executable}".format(**each))
+                self.post_data(results_list, "result")
 
-            self.post_data(results_list, "result")
         except Exception as e:
             print(e)
-        # todo: check output against reference
 
     def run_benchmark(self, benchmark, revision, working_directory):
         name = benchmark["name"]
@@ -66,14 +81,29 @@ class Measurer:
 
         print("Running {}:{}".format(exe, name))
 
-        outname = "{exe}_{name}_{sha}_stdout.txt".format(sha=revision, exe=exe, name=name)
-        errname = "{exe}_{name}_{sha}_stderr.txt".format(sha=revision, exe=exe, name=name)
-        self.output_files.append(outname)
-        self.output_files.append(errname)
-        with open(outname, "w") as out, open(errname, "w") as err:
+        out_name = "{exe}_{name}_{sha}_stdout.txt".format(sha=revision, exe=exe, name=name)
+        err_name = "{exe}_{name}_{sha}_stderr.txt".format(sha=revision, exe=exe, name=name)
+        self.output_files.append(out_name)
+        self.output_files.append(err_name)
+        with open(out_name, "w") as out, open(err_name, "w") as err:
             cmd_and_args = shlex.split(benchmark["command"])
             result = self.measure_benchmark(cmd_and_args, err, out, working_directory)
-        return result
+
+        checksum = self.archive_output(out_name)
+        if os.path.getsize(err_name) == 0:
+            os.remove(err_name)
+
+        return result, checksum
+
+    @staticmethod
+    def archive_output(outname):
+        checksum = calc_checksum(outname)
+        filename = checksum + ".txt"
+        if not os.path.exists(filename):
+            shutil.move(outname, filename)
+        else:
+            os.remove(outname)
+        return checksum
 
     def measure_benchmark(self, cmd_and_args, err, out, working_directory):
         samples = []
@@ -112,31 +142,49 @@ class Measurer:
                 time.sleep(0.1)
 
     def build_revision(self, sha):
-        print("Building {sha}".format(sha=sha))
-        self.cmd("git checkout {sha}".format(sha=sha))
-        self.cmd(self.config["build"])
+        if not self.skip_build:
+            print("Building {sha}".format(sha=sha))
+            self.cmd("git checkout {sha}".format(sha=sha))
+            self.cmd(self.config["build"])
 
     def get_revision_details(self, sha):
-        cmd = "git show --pretty=format:'%ae%n%aI%n%s%n%b' " + sha
-        lines = self.cmd(cmd, capture_output=True).split("\n")
-        revision = {
-            "repo": self.config["repoName"],
-            "branch": self.branch,
-            "sha": sha,
-            "author": lines[0],
-            "date": lines[1],
-            "title": lines[2],
-            "message": "\n".join(lines[3:])
-        }
+        if self.skip_build:
+            revision = {
+                "repo": self.config["repoName"],
+                "branch": self.branch,
+                "sha": self.config["revision"]["name"],
+                "date": self.config["revision"]["date"],
+                "title": "Reference revision {}".format(self.config["revision"]["name"]),
+                "message": "Reference revision {}".format(self.config["revision"]["name"])
+            }
+        else:
+            cmd = "git show --pretty=format:'%ae%n%aI%n%s%n%b' " + sha
+            lines = self.cmd(cmd, capture_output=True).split("\n")
+            revision = {
+                "repo": self.config["repoName"],
+                "branch": self.branch,
+                "sha": sha,
+                "author": lines[0],
+                "date": lines[1],
+                "title": lines[2],
+                "message": "\n".join(lines[3:])
+            }
         return revision
 
     def get_revisions(self, count):
-        cmd = "git rev-list --max-count {count} --first-parent {branch}".format(branch=self.branch, count=count)
-        shas = self.cmd(cmd, capture_output=True).strip()
-        sha_list = shas.split("\n")
-        return list(reversed(sha_list))
+        if self.skip_build:
+            revision_list = [self.config["revision"]["name"]]
+        else:
+            cmd = "git rev-list --max-count {count} --first-parent {branch}".format(branch=self.branch, count=count)
+            revisions = self.cmd(cmd, capture_output=True).strip()
+            descending_revision_list = revisions.split("\n")
+            revision_list = list(reversed(descending_revision_list))
+        return revision_list
 
     def prepare_repo_folder(self):
+        if self.skip_build:
+            return
+
         if not os.path.exists(self.config["folder"]):
             os.mkdir(self.config["folder"])
         if not os.path.exists(os.path.join(self.config["folder"], ".git")):
@@ -167,6 +215,7 @@ class Measurer:
             request = urllib.request.Request(url, data=as_json, headers=headers)
             with urllib.request.urlopen(request) as f:
                 response = f.read()
-                print(response)
+                if response:
+                    print(response.decode("utf8"))
         except urllib.request.HTTPError as e:
             print(e)
