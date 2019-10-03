@@ -107,20 +107,34 @@ class Measurer:
 
     def measure_benchmark(self, cmd_and_args, err, out, working_directory):
         samples = []
-        fields = ["cpu_times", "memory_info", "num_threads", "num_fds"]
+        fields = ["cpu_times", "memory_info", "num_threads", "num_fds", "io_counters"]
         start = time.perf_counter()
         with psutil.Popen(cmd_and_args, cwd=working_directory, stdout=out, stderr=err, text=True) as p:
             self.measure_process(p, fields, samples)
         end = time.perf_counter()
         duration = end - start
         rss = max([x["memory_info"].rss for x in samples])
+        vms = max([x["memory_info"].vms for x in samples])
+        num_threads = max([x["num_threads"] for x in samples])
+        num_fds = max([x["num_fds"] for x in samples])
         user = samples[-1]["cpu_times"].user
         system = samples[-1]["cpu_times"].system
+        read_count = samples[-1]["io_counters"].read_count
+        write_count = samples[-1]["io_counters"].write_count
+        read_bytes = samples[-1]["io_counters"].read_bytes
+        write_bytes = samples[-1]["io_counters"].write_bytes
         result = {
             "duration": duration,
             "rss": rss,
+            "vms": vms,
             "usr": user,
-            "sys": system
+            "sys": system,
+            "read_count": read_count,
+            "write_count": write_count,
+            "read_bytes": read_bytes,
+            "write_bytes": write_bytes,
+            "num_threads": num_threads,
+            "num_fds": num_fds,
         }
         return result
 
